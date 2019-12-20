@@ -1,0 +1,8 @@
+Copied files, '*' means modified:
+fuchsia/zircon/bootloader/src/osboot.h ------------> src/osboot.h
+fuchsia/zircon/bootloader/src/cmdline.c -----------> src/cmdline.c
+fuchsia/zircon/bootloader/src/misc.c --------------> src/misc.c
+fuchsia/zircon/bootloader/src/cmdline.h -----------> src/cmdline.h
+fuchsia/zircon/bootloader/src/zircon.c ------------> src/zircon.c
+fuchsia/zircon/bootloader/src/pci.c ---------------> src/pci.c
+fuchsia/zircon/system/public/zircon/boot/image.h --> include/zircon_image.h
