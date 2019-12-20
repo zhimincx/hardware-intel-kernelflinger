@@ -76,6 +76,9 @@
 #ifdef USE_TPM
 #include "tpm2_security.h"
 #endif
+#ifdef ZIRCON_BOOT
+#include "zircon_boot.h"
+#endif
 
 /* Ensure this is embedded in the EFI binary somewhere */
 static const CHAR16 __attribute__((used)) magic[] = L"### kernelflinger ###";
@@ -1346,6 +1349,10 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table)
 			return EFI_NO_MEDIA;
 		}
 	}
+
+#ifdef ZIRCON_BOOT
+	return zircon_boot(image, sys_table, boot_target);
+#endif // ZIRCON_BOOT
 
 	uefi_bios_update_capsule(g_disk_device, FWUPDATE_FILE);
 

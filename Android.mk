@@ -308,6 +308,13 @@ endif
 LOCAL_C_INCLUDES += \
 	$(addprefix $(LOCAL_PATH)/,libkernelflinger) \
 	$(addprefix $(LOCAL_PATH)/,libsslsupport)
+
+ifeq ($(ZIRCON_BOOT),true)
+    LOCAL_CFLAGS += -DZIRCON_BOOT
+	LOCAL_STATIC_LIBRARIES += libzircon-$(TARGET_BUILD_VARIANT)
+	LOCAL_C_INCLUDES += $(addprefix $(LOCAL_PATH)/,zircon)
+endif
+
 include $(BUILD_EFI_EXECUTABLE)  # For kernelflinger-$(TARGET_BUILD_VARIANT)
 
 

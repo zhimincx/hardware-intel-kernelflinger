@@ -16,6 +16,7 @@ LOCAL_STATIC_LIBRARIES := \
 	libkernelflinger-$(TARGET_BUILD_VARIANT)
 
 LOCAL_SRC_FILES := \
+	zircon_boot.c \
 	src/cmdline.c \
 	src/misc.c \
 	src/pci.c \

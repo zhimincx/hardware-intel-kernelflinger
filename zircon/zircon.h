@@ -23,4 +23,7 @@ typedef uint64_t efi_virtual_addr;
 #define KERNEL_ZONE_BASE 0x100000
 #define KERNEL_ZONE_SIZE (6 * 1024 * 1024)
 
+efi_status xefi_find_pci_mmio(uint8_t cls, uint8_t sub, uint8_t ifc,
+                              uint64_t* mmio);
+
 #endif  // ZIRCON_BOOTLOADER_INCLUDE_CTYPE_H_
