@@ -2,21 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <cmdline.h>
-#include <inttypes.h>
-#include <stdio.h>
-#include <string.h>
-#include <xefi.h>
-#include <zircon/boot/image.h>
-#include <zircon/pixelformat.h>
-
-#include <efi/protocol/graphics-output.h>
-#include <efi/runtime-services.h>
-
+#include "cmdline.h"
+#include "zircon_image.h"
+#include "zircon.h"
 #include "osboot.h"
+#define printf(fmt, ...) log(L"" fmt,  ##__VA_ARGS__)
 
 static efi_guid zircon_guid = ZIRCON_VENDOR_GUID;
-static char16_t crashlog_name[] = ZIRCON_CRASHLOG_EFIVAR;
+static CHAR16 crashlog_name[] = ZIRCON_CRASHLOG_EFIVAR;
 
 static size_t get_last_crashlog(efi_system_table* sys, void* ptr, size_t max) {
   efi_runtime_services* rs = sys->RuntimeServices;
@@ -190,33 +183,57 @@ unsigned identify_image(void* image, size_t sz) {
   return r;
 }
 
-int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, void* ramdisk,
+efi_status boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, void* ramdisk,
                 size_t rsz, void* cmdline, size_t csz) {
-  efi_boot_services* bs = sys->BootServices;
+  // efi_boot_services* bs = sys->BootServices;
   uint64_t entry;
+  uint64_t kernel_zone_size = KERNEL_ZONE_SIZE;
+  uint64_t kernel_zone_base = KERNEL_ZONE_BASE;
 
   if (header_check(image, isz, &entry, NULL, NULL)) {
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
   if ((ramdisk == NULL) || (rsz < sizeof(zbi_header_t))) {
     printf("boot: ramdisk missing or too small\n");
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
   if (isz > kernel_zone_size) {
     printf("boot: kernel image too large\n");
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
+
+/* from osboot.c */
+  if (gBS->AllocatePages(AllocateAddress, EfiLoaderData, BYTES_TO_PAGES(kernel_zone_size),
+                         &kernel_zone_base)) {
+    printf("boot: cannot obtain %zu bytes for kernel @ %p\n", kernel_zone_size,
+           (void*)kernel_zone_base);
+    kernel_zone_size = 0;
+  }
+  // HACK: Try again with a smaller size - certain platforms (ex: GCE) are unable
+  // to support a large fixed allocation at 0x100000.
+  if (kernel_zone_size == 0) {
+    kernel_zone_size = 3 * 1024 * 1024;
+    efi_status status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                                           BYTES_TO_PAGES(kernel_zone_size), &kernel_zone_base);
+    if (status) {
+      printf("boot: cannot obtain %zu bytes for kernel @ %p\n", kernel_zone_size,
+             (void*)kernel_zone_base);
+      kernel_zone_size = 0;
+    }
+  }
+  printf("KALLOC DONE\n");
+/* end from boot.c */
 
   zbi_header_t* hdr0 = ramdisk;
   if ((hdr0->type != ZBI_TYPE_CONTAINER) || (hdr0->extra != ZBI_CONTAINER_MAGIC) ||
       !(hdr0->flags & ZBI_FLAG_VERSION)) {
     printf("boot: ramdisk has invalid bootdata header\n");
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
 
   if ((hdr0->length > (rsz - sizeof(zbi_header_t)))) {
     printf("boot: ramdisk has invalid bootdata length\n");
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
 
   // osboot ensures we have FRONT_BYTES ahead of the
@@ -236,7 +253,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
   hdr.extra = 0;
   hdr.flags = ZBI_FLAG_VERSION;
   if (add_bootdata(&bptr, &blen, &hdr, cmdline)) {
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
 
   // pass ACPI root pointer
@@ -245,7 +262,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
     hdr.type = ZBI_TYPE_ACPI_RSDP;
     hdr.length = sizeof(rsdp);
     if (add_bootdata(&bptr, &blen, &hdr, &rsdp)) {
-      return -1;
+      return EFI_INVALID_PARAMETER;
     }
   }
 
@@ -255,7 +272,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
     hdr.type = ZBI_TYPE_SMBIOS;
     hdr.length = sizeof(smbios);
     if (add_bootdata(&bptr, &blen, &hdr, &smbios)) {
-      return -1;
+      return EFI_INVALID_PARAMETER;
     }
   }
 
@@ -264,25 +281,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
   hdr.type = ZBI_TYPE_EFI_SYSTEM_TABLE;
   hdr.length = sizeof(sys);
   if (add_bootdata(&bptr, &blen, &hdr, &addr)) {
-    return -1;
-  }
-
-  // pass framebuffer data
-  efi_graphics_output_protocol* gop = NULL;
-  bs->LocateProtocol(&GraphicsOutputProtocol, NULL, (void**)&gop);
-  if (gop) {
-    zbi_swfb_t fb = {
-        .base = gop->Mode->FrameBufferBase,
-        .width = gop->Mode->Info->HorizontalResolution,
-        .height = gop->Mode->Info->VerticalResolution,
-        .stride = gop->Mode->Info->PixelsPerScanLine,
-        .format = get_zx_pixel_format(gop),
-    };
-    hdr.type = ZBI_TYPE_FRAMEBUFFER;
-    hdr.length = sizeof(fb);
-    if (add_bootdata(&bptr, &blen, &hdr, &fb)) {
-      return -1;
-    }
+    return EFI_INVALID_PARAMETER;
   }
 
   memcpy((void*)kernel_zone_base, image, isz);
@@ -307,7 +306,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
     }
     if (r == EFI_INVALID_PARAMETER) {
       if (attempts > 0) {
-        printf("boot: cannot ExitBootServices(): %s\n", xefi_strerror(r));
+        efi_perror(r, L"boot: cannot ExitBootServices()");
         goto fail;
       }
       // Attempting to exit may cause us to have to re-grab the
@@ -315,7 +314,7 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
       // broken.
       continue;
     }
-    printf("boot: cannot ExitBootServices(): %s\n", xefi_strerror(r));
+    efi_perror(r, L"boot: cannot ExitBootServices()");
     goto fail;
   }
   memcpy(scratch, &dsize, sizeof(uint64_t));
@@ -348,15 +347,15 @@ int boot_zircon(efi_handle img, efi_system_table* sys, void* image, size_t isz, 
   start_zircon(entry, ramdisk - FRONT_BYTES);
 
 fail:
-  return -1;
+  return EFI_LOAD_ERROR;
 }
 
 static char cmdline[CMDLINE_MAX];
 
-int zedboot(efi_handle img, efi_system_table* sys, void* image, size_t sz) {
+efi_status zedboot(efi_handle img, efi_system_table* sys, void* image, size_t sz) {
   size_t flen, klen;
   if (header_check(image, sz, NULL, &flen, &klen)) {
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
 
   // ramdisk portion is file - headers - kernel len
@@ -364,7 +363,7 @@ int zedboot(efi_handle img, efi_system_table* sys, void* image, size_t sz) {
   uint32_t roff = (sizeof(zbi_header_t) * 2) + klen;
   if (rlen == 0) {
     printf("zedboot: no ramdisk?!\n");
-    return -1;
+    return EFI_NOT_FOUND;
   }
 
   // allocate space for the ramdisk
@@ -376,7 +375,7 @@ int zedboot(efi_handle img, efi_system_table* sys, void* image, size_t sz) {
       bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, (efi_physical_addr*)&ramdisk);
   if (r) {
     printf("zedboot: cannot allocate ramdisk buffer\n");
-    return -1;
+    return EFI_OUT_OF_RESOURCES;
   }
 
   ramdisk += FRONT_BYTES;
@@ -395,7 +394,7 @@ int zedboot(efi_handle img, efi_system_table* sys, void* image, size_t sz) {
   return boot_zircon(img, sys, image, roff, ramdisk, rlen, cmdline, csz);
 }
 
-int boot_kernel(efi_handle img, efi_system_table* sys, void* image, size_t sz, void* ramdisk,
+efi_status boot_kernel(efi_handle img, efi_system_table* sys, void* image, size_t sz, void* ramdisk,
                 size_t rsz) {
   size_t csz = cmdline_to_string(cmdline, sizeof(cmdline));
 
@@ -403,6 +402,6 @@ int boot_kernel(efi_handle img, efi_system_table* sys, void* image, size_t sz, v
   if ((bd->type == ZBI_TYPE_CONTAINER) && (bd->extra == ZBI_CONTAINER_MAGIC)) {
     return boot_zircon(img, sys, image, sz, ramdisk, rsz, cmdline, csz);
   } else {
-    return -1;
+    return EFI_INVALID_PARAMETER;
   }
 }

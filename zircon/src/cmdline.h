@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "zircon.h"
 
 // append a commandline string to the commandline
 void cmdline_append(const char* str, size_t len);

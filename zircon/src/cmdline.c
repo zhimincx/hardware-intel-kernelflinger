@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <cmdline.h>
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
+#include "cmdline.h"
 #include "osboot.h"
+#include "zircon.h"
 
 #define CMDLINE_MAX_ITEMS 128
 #define CMDLINE_MAX_STRINGDATA (PAGE_SIZE * 3)
@@ -156,5 +152,5 @@ uint32_t cmdline_get_uint32(const char* key, uint32_t _default) {
   if (val == NULL) {
     return _default;
   }
-  return atol(val);
+  return (uint32_t)strtoul(val, 0, 10);
 }
